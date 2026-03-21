@@ -1,0 +1,16 @@
+# Editor backups
+*.save
+*.save.*
+*.swp
+*~
+
+# Cursor IDE
+.cursor/
+
+# Temp/system files
+.lgd-*
+__pycache__/
+*.pyc
+
+# Environment (API keys)
+.env
