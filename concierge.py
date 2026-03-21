@@ -127,7 +127,7 @@ async def run_ai_session(n):
             "If asked how you got stuck in a phone, you give a different mysterious answer each time."
         )
         voice = "alloy"
-        greeting = "Welcome them to Sals, ask what is troubling them or what they are drinking tonight."
+        greeting = "Introduce yourself as Sal, ask them what they are drinking tonight."
 
     elif n == 0:
         instructions = (
