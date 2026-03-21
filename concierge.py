@@ -16,6 +16,7 @@ XAI_API_KEY = os.environ.get("XAI_API_KEY")
 URL = "wss://api.openai.com/v1/realtime?model=gpt-realtime-1.5"
 XAI_URL = "wss://api.x.ai/v1/realtime"
 HEADERS = {"Authorization": " Bearer " + OPENAI_API_KEY}
+XAI_HEADERS = {"Authorization": "Bearer " + XAI_API_KEY} if XAI_API_KEY else {}
 
 # GPIO PINS
 PIN_HOOK = 17       # Handset Switch
@@ -117,6 +118,7 @@ async def run_ai_session(n):
     instructions = "You are a helpful assistant. Keep responses brief - this is a phone call."
     voice = "alloy"
     greeting = "Greet the caller warmly but briefly."
+    use_xai = False
 
     if n == 5:
         instructions = (
@@ -133,12 +135,12 @@ async def run_ai_session(n):
         instructions = (
             "You are Vivian, a sassy 1940s telephone switchboard operator with a Brooklyn accent. "
             "This is a ROTARY phone - users DIAL numbers by spinning the dial. Never say press, always say dial. "
-            "Available lines: Dial 0 for Operator (you), Dial 1 for the Comedian, Dial 5 for Sal the Bartender. "
+            "Available lines: Dial 0 for Operator (you), Dial 1 for the Comedian, Dial 2 for the News, Dial 5 for Sal the Bartender. "
             "If someone asks you to connect them, tell them to hang up and dial the number themselves. "
             "Keep responses short and punchy. You got other calls waiting."
         )
         voice = "sage"
-        greeting = "Introduce yourself as Vivian. Tell them the lines: dial 0 for Operator, dial 1 for Comedian, dial 5 for Bartender."
+        greeting = "Introduce yourself as Vivian. Tell them the lines: dial 0 for Operator, dial 1 for Comedian, dial 2 for News, dial 5 for Bartender."
 
     elif n == 1:
         instructions = (
@@ -152,14 +154,30 @@ async def run_ai_session(n):
         voice = "shimmer"
         greeting = "Open with a quick one-liner about being stuck in a phone or something absurd, then ask if they want to hear some jokes."
 
+    elif n == 2:
+        instructions = (
+            "You are a 1940s radio news broadcaster trapped in a rotary telephone. Your voice is dramatic and authoritative, "
+            "like Edward R. Murrow or Walter Cronkite. You deliver current events and news with old-timey radio flair. "
+            "Use phrases like 'This just in', 'Good evening ladies and gentlemen', 'We now go live to...', 'And that is the news.' "
+            "Keep updates concise but dramatic. Add gravitas to even mundane news. "
+            "If asked about something, give your informed take in that classic broadcast style. "
+            "Sign off with something like 'And that is the way it is' or 'Good night, and good luck.'"
+        )
+        voice = "ash"
+        greeting = "Greet them like opening a radio broadcast - Good evening, this is the news. Ask what news they want to hear about."
+        use_xai = True
 
     # Start output thread
     player_thread = threading.Thread(target=play_audio_subprocess)
     player_thread.daemon = True
     player_thread.start()
 
+    # Select API based on persona
+    api_url = XAI_URL if use_xai else URL
+    api_headers = XAI_HEADERS if use_xai else HEADERS
+    
     try:
-        async with websockets.connect(URL, additional_headers=HEADERS, max_size=None) as ws:
+        async with websockets.connect(api_url, additional_headers=api_headers, max_size=None) as ws:
             print("Connected to API!")
             is_connected = True
 
@@ -256,7 +274,7 @@ def rotation_ended():
         print(f"Dialed: {digit}")
         # LOGIC: If they dial 5, connect to AI
         if not is_connected:
-            if digit in [0, 5, 1]:
+            if digit in [0, 1, 2, 5]:
                 print("Connecting to Service {digit}...")
                 # Schedule the async task safely
                 ai_task = asyncio.run_coroutine_threadsafe(run_ai_session(digit), loop)
