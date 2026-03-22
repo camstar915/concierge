@@ -68,7 +68,7 @@ PERSONAS = {
     2: {
         "name": "News",
         "api": "xai",
-        "voice": "ash",
+        "voice": "Leo",
         "instructions": (
             "You are a 1940s radio news broadcaster trapped in a rotary telephone. "
             "Your voice is dramatic and authoritative, like Edward R. Murrow or Walter Cronkite. "
@@ -95,6 +95,24 @@ API_CONFIG = {
     "openai": {"url": URL, "headers": HEADERS},
     "xai": {"url": XAI_URL, "headers": XAI_HEADERS},
 }
+
+# Expected high-frequency / lifecycle events (do not log each one)
+_REALTIME_EVENT_NOISE = frozenset(
+    {
+        "session.updated",
+        "conversation.created",
+        "response.created",
+        "response.done",
+        "response.output_audio_transcript.delta",
+        "response.output_audio_transcript.done",
+        "response.output_audio.done",
+        "input_audio_buffer.speech_stopped",
+        "input_audio_buffer.committed",
+        "conversation.item.added",
+        "conversation.item.input_audio_transcription.completed",
+        "response.output_item.added",
+    }
+)
 
 # GPIO PINS
 PIN_HOOK = 17       # Handset Switch
@@ -215,16 +233,27 @@ async def run_ai_session(n):
             print("Connected to API!")
             is_connected = True
 
-            # Config Session
-            await ws.send(json.dumps({
-                "type": "session.update",
-                "session": {
-                    "type": "realtime",
-                    "instructions": instructions,
-                    "output_modalities": ["audio"],
-                    "audio": {"output": {"voice": voice}}
+            # Config Session (OpenAI and xAI use different session.update shapes)
+            if api == "xai":
+                session_payload = {
+                    "type": "session.update",
+                    "session": {
+                        "voice": voice,
+                        "instructions": instructions,
+                        "turn_detection": {"type": "server_vad"},
+                    },
                 }
-            }))
+            else:
+                session_payload = {
+                    "type": "session.update",
+                    "session": {
+                        "type": "realtime",
+                        "instructions": instructions,
+                        "output_modalities": ["audio"],
+                        "audio": {"output": {"voice": voice}},
+                    },
+                }
+            await ws.send(json.dumps(session_payload))
 
             # Initial Greeting
             await ws.send(json.dumps({
@@ -254,6 +283,15 @@ async def run_ai_session(n):
 
                 elif event_type == "response.audio_transcript.done":
                     print(f"AI: {data.get('transcript')}")
+
+                elif event_type == "error":
+                    print(f"API Error: {json.dumps(data, indent=2)}")
+
+                elif event_type in _REALTIME_EVENT_NOISE:
+                    pass
+
+                else:
+                    print(f"(unhandled event: {event_type})")
 
     except asyncio.CancelledError:
         print("AI Session Cancelled.")
