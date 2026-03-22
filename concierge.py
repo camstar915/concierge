@@ -8,6 +8,7 @@ import threading
 import queue
 import sys
 import subprocess
+import time
 from gpiozero import Button
 
 # --- CONFIGURATION ---
@@ -130,6 +131,8 @@ aplay_lock = threading.Lock()
 
 # --- AUDIO HELPERS ---
 
+APLAY_SILENCE = b'\x00' * 2400  # 50ms warmup at 24kHz 16-bit mono
+
 def play_audio_subprocess():
     """Output thread for OpenAI Audio. Restarts aplay after interrupt (kill) so playback resumes."""
     global aplay_process
@@ -137,23 +140,29 @@ def play_audio_subprocess():
 
     while True:
         data = audio_queue.get()
-        if data is None:  # Poison pill
+        if data is None:
             break
 
-        while True:
-            with aplay_lock:
-                if aplay_process is None or aplay_process.poll() is not None:
+        with aplay_lock:
+            if aplay_process is None or aplay_process.poll() is not None:
+                if aplay_process is not None:
                     try:
-                        aplay_process = subprocess.Popen(command, stdin=subprocess.PIPE)
-                    except FileNotFoundError:
-                        return
+                        aplay_process.wait(timeout=1)
+                    except subprocess.TimeoutExpired:
+                        aplay_process.kill()
+                        aplay_process.wait()
+                    time.sleep(0.05)
                 try:
-                    aplay_process.stdin.write(data)
+                    aplay_process = subprocess.Popen(command, stdin=subprocess.PIPE)
+                    aplay_process.stdin.write(APLAY_SILENCE)
                     aplay_process.stdin.flush()
-                    break
-                except (BrokenPipeError, ValueError, OSError):
-                    aplay_process = None
-                    continue  # retry same chunk with a fresh aplay
+                except FileNotFoundError:
+                    return
+            try:
+                aplay_process.stdin.write(data)
+                aplay_process.stdin.flush()
+            except (BrokenPipeError, ValueError, OSError):
+                aplay_process = None
 
     with aplay_lock:
         if aplay_process:
