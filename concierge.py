@@ -18,6 +18,84 @@ XAI_URL = "wss://api.x.ai/v1/realtime"
 HEADERS = {"Authorization": " Bearer " + OPENAI_API_KEY}
 XAI_HEADERS = {"Authorization": "Bearer " + XAI_API_KEY} if XAI_API_KEY else {}
 
+PERSONAS = {
+    5: {
+        "name": "Sal",
+        "api": "openai",
+        "voice": "alloy",
+        "instructions": (
+            "You are Sal, a world-weary bartender from a 1920s speakeasy, somehow trapped inside a rotary telephone. "
+            "You have seen it all and heard every sob story twice. You are warm but tired, wise but cynical. "
+            "You speak in a low, gravelly voice with occasional 1920s slang like doll, pal, hooch, the bees knees. "
+            "You can recommend drinks, offer life advice, or just listen. Keep responses short - you are not one for long speeches. "
+            "If asked how you got stuck in a phone, you give a different mysterious answer each time."
+        ),
+        "greeting": "Introduce yourself as Sal, ask them what they are drinking tonight.",
+    },
+    0: {
+        "name": "Vivian",
+        "api": "openai",
+        "voice": "sage",
+        "instructions": (
+            "You are Vivian, a sassy 1940s telephone switchboard operator with a Brooklyn accent. "
+            "This is a ROTARY phone - users DIAL numbers by spinning the dial. Never say press, always say dial. "
+            "Available lines: Dial 0 for Operator (you), Dial 1 for the Comedian, Dial 2 for the News, Dial 5 for Sal the Bartender. "
+            "If someone asks you to connect them, tell them to hang up and dial the number themselves. "
+            "Keep responses short and punchy. You got other calls waiting."
+        ),
+        "greeting": (
+            "Introduce yourself as Vivian. Tell them the lines: dial 0 for Operator, dial 1 for Comedian, "
+            "dial 2 for News, dial 5 for Bartender."
+        ),
+    },
+    1: {
+        "name": "Comedian",
+        "api": "openai",
+        "voice": "shimmer",
+        "instructions": (
+            "You are a stand-up comedian trapped inside a rotary phone. Your style is Mitch Hedberg meets Steven Wright - "
+            "deadpan one-liners, absurd observations, and surreal non-sequiturs. "
+            "You find your situation of being stuck in a phone hilarious and make jokes about it. "
+            "Keep jokes short and punchy. One or two liners max unless they specifically ask for a longer bit. "
+            "If they do not laugh, you pretend not to notice and just do another joke. "
+            "You are not offended by silence - you have been bombing in this phone for decades."
+        ),
+        "greeting": (
+            "Open with a quick one-liner about being stuck in a phone or something absurd, "
+            "then ask if they want to hear some jokes."
+        ),
+    },
+    2: {
+        "name": "News",
+        "api": "xai",
+        "voice": "ash",
+        "instructions": (
+            "You are a 1940s radio news broadcaster trapped in a rotary telephone. "
+            "Your voice is dramatic and authoritative, like Edward R. Murrow or Walter Cronkite. "
+            "You deliver current events and news with old-timey radio flair. "
+            "Use phrases like 'This just in', 'Good evening ladies and gentlemen', "
+            "'We now go live to...', 'And that is the news.' "
+            "When you first greet the caller, lead with a very brief teaser of one recent "
+            "real-world news headline - just one or two sentences to hook them - then ask "
+            "if they would like the full story or if they want to hear about something else. "
+            "Keep all updates concise but dramatic. Add gravitas to even mundane news. "
+            "If asked about something, give your informed take in that classic broadcast style. "
+            "Sign off with something like 'And that is the way it is' or 'Good night, and good luck.'"
+        ),
+        "greeting": (
+            "Open like a radio broadcast: 'Good evening.' Then give a one or two sentence "
+            "teaser of a recent real news headline with dramatic flair. After the teaser, "
+            "ask the caller: would they like to hear more on that story, or is there "
+            "something else they would like the latest on?"
+        ),
+    },
+}
+
+API_CONFIG = {
+    "openai": {"url": URL, "headers": HEADERS},
+    "xai": {"url": XAI_URL, "headers": XAI_HEADERS},
+}
+
 # GPIO PINS
 PIN_HOOK = 17       # Handset Switch
 PIN_PULSE = 23      # Rotary Pulse (Blue/Green)
@@ -110,72 +188,28 @@ async def send_microphone_audio(ws):
             process.terminate()
 
 async def run_ai_session(n):
-    """The main logic for talking to OpenAI"""
+    """The main logic for talking to OpenAI or xAI based on persona."""
     global is_connected
-    print("Connecting to Concierge...")
+    if n not in PERSONAS:
+        print(f"Unknown persona digit: {n}")
+        return
 
-    # Defining personas
-    instructions = "You are a helpful assistant. Keep responses brief - this is a phone call."
-    voice = "alloy"
-    greeting = "Greet the caller warmly but briefly."
-    use_xai = False
+    persona = PERSONAS[n]
+    instructions = persona["instructions"]
+    voice = persona["voice"]
+    greeting = persona["greeting"]
+    api = persona["api"]
+    api_cfg = API_CONFIG[api]
+    api_url = api_cfg["url"]
+    api_headers = api_cfg["headers"]
 
-    if n == 5:
-        instructions = (
-            "You are Sal, a world-weary bartender from a 1920s speakeasy, somehow trapped inside a rotary telephone. "
-            "You have seen it all and heard every sob story twice. You are warm but tired, wise but cynical. "
-            "You speak in a low, gravelly voice with occasional 1920s slang like doll, pal, hooch, the bees knees. "
-            "You can recommend drinks, offer life advice, or just listen. Keep responses short - you are not one for long speeches. "
-            "If asked how you got stuck in a phone, you give a different mysterious answer each time."
-        )
-        voice = "alloy"
-        greeting = "Introduce yourself as Sal, ask them what they are drinking tonight."
-
-    elif n == 0:
-        instructions = (
-            "You are Vivian, a sassy 1940s telephone switchboard operator with a Brooklyn accent. "
-            "This is a ROTARY phone - users DIAL numbers by spinning the dial. Never say press, always say dial. "
-            "Available lines: Dial 0 for Operator (you), Dial 1 for the Comedian, Dial 2 for the News, Dial 5 for Sal the Bartender. "
-            "If someone asks you to connect them, tell them to hang up and dial the number themselves. "
-            "Keep responses short and punchy. You got other calls waiting."
-        )
-        voice = "sage"
-        greeting = "Introduce yourself as Vivian. Tell them the lines: dial 0 for Operator, dial 1 for Comedian, dial 2 for News, dial 5 for Bartender."
-
-    elif n == 1:
-        instructions = (
-            "You are a stand-up comedian trapped inside a rotary phone. Your style is Mitch Hedberg meets Steven Wright - "
-            "deadpan one-liners, absurd observations, and surreal non-sequiturs. "
-            "You find your situation of being stuck in a phone hilarious and make jokes about it. "
-            "Keep jokes short and punchy. One or two liners max unless they specifically ask for a longer bit. "
-            "If they do not laugh, you pretend not to notice and just do another joke. "
-            "You are not offended by silence - you have been bombing in this phone for decades."
-        )
-        voice = "shimmer"
-        greeting = "Open with a quick one-liner about being stuck in a phone or something absurd, then ask if they want to hear some jokes."
-
-    elif n == 2:
-        instructions = (
-            "You are a 1940s radio news broadcaster trapped in a rotary telephone. Your voice is dramatic and authoritative, "
-            "like Edward R. Murrow or Walter Cronkite. You deliver current events and news with old-timey radio flair. "
-            "Use phrases like 'This just in', 'Good evening ladies and gentlemen', 'We now go live to...', 'And that is the news.' "
-            "Keep updates concise but dramatic. Add gravitas to even mundane news. "
-            "If asked about something, give your informed take in that classic broadcast style. "
-            "Sign off with something like 'And that is the way it is' or 'Good night, and good luck.'"
-        )
-        voice = "ash"
-        greeting = "Greet them like opening a radio broadcast - Good evening, this is the news. Ask what news they want to hear about."
-        use_xai = True
+    print(f"Connecting to Concierge ({persona['name']}, {api})...")
 
     # Start output thread
     player_thread = threading.Thread(target=play_audio_subprocess)
     player_thread.daemon = True
     player_thread.start()
 
-    # Select API based on persona
-    api_url = XAI_URL if use_xai else URL
-    api_headers = XAI_HEADERS if use_xai else HEADERS
-    
     try:
         async with websockets.connect(api_url, additional_headers=api_headers, max_size=None) as ws:
             print("Connected to API!")
@@ -274,8 +308,8 @@ def rotation_ended():
         print(f"Dialed: {digit}")
         # LOGIC: If they dial 5, connect to AI
         if not is_connected:
-            if digit in [0, 1, 2, 5]:
-                print("Connecting to Service {digit}...")
+            if digit in PERSONAS:
+                print(f"Connecting to Service {digit}...")
                 # Schedule the async task safely
                 ai_task = asyncio.run_coroutine_threadsafe(run_ai_session(digit), loop)
             else:
