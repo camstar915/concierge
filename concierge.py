@@ -125,32 +125,44 @@ ai_task = None
 dial_tone_process = None
 is_connected = False
 pulse_count = 0
+aplay_process = None
+aplay_lock = threading.Lock()
 
 # --- AUDIO HELPERS ---
 
 def play_audio_subprocess():
-    """Output thread for OpenAI Audio"""
+    """Output thread for OpenAI Audio. Restarts aplay after interrupt (kill) so playback resumes."""
+    global aplay_process
     command = ["aplay", "-D", "plughw:Device,0", "-t", "raw", "-r", "24000", "-f", "S16_LE", "-c", "1", "--quiet"]
-    try:
-        process = subprocess.Popen(command, stdin=subprocess.PIPE)
-    except FileNotFoundError:
-        return
 
     while True:
         data = audio_queue.get()
-        if data is None: # Poison pill
-            break
-        try:
-            process.stdin.write(data)
-            process.stdin.flush()
-        except (BrokenPipeError, ValueError):
+        if data is None:  # Poison pill
             break
 
-    try:
-        process.stdin.close()
-        process.wait()
-    except:
-        pass
+        while True:
+            with aplay_lock:
+                if aplay_process is None or aplay_process.poll() is not None:
+                    try:
+                        aplay_process = subprocess.Popen(command, stdin=subprocess.PIPE)
+                    except FileNotFoundError:
+                        return
+                try:
+                    aplay_process.stdin.write(data)
+                    aplay_process.stdin.flush()
+                    break
+                except (BrokenPipeError, ValueError, OSError):
+                    aplay_process = None
+                    continue  # retry same chunk with a fresh aplay
+
+    with aplay_lock:
+        if aplay_process:
+            try:
+                aplay_process.stdin.close()
+                aplay_process.wait()
+            except Exception:
+                pass
+            aplay_process = None
 
 def start_dial_tone():
     """Plays dial-tone.wav in a loop using a shell loop"""
@@ -288,6 +300,9 @@ async def run_ai_session(n):
                     print("(User speaking - clearing queue)")
                     with audio_queue.mutex:
                         audio_queue.queue.clear()
+                    with aplay_lock:
+                        if aplay_process and aplay_process.poll() is None:
+                            aplay_process.terminate()
 
                 elif event_type == "response.audio_transcript.done":
                     print(f"AI: {data.get('transcript')}")
