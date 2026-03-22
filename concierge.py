@@ -84,7 +84,7 @@ PERSONAS = {
         ),
         "greeting": (
             "Open like a radio broadcast: 'Good evening.' Then give a one or two sentence "
-            "teaser of a recent real news headline with dramatic flair. After the teaser, "
+            "teaser of a recent real news headline from the live X feed with dramatic flair. After the teaser, "
             "ask the caller: would they like to hear more on that story, or is there "
             "something else they would like the latest on?"
         ),
@@ -238,6 +238,14 @@ async def run_ai_session(n):
                 session_payload = {
                     "type": "session.update",
                     "session": {
+                        "tools": [
+                            {
+                                "type": "web_search",
+                            },
+                            {
+                                "type": "x_search",
+                            },
+                        ],
                         "voice": voice,
                         "instructions": instructions,
                         "turn_detection": {"type": "server_vad"},
