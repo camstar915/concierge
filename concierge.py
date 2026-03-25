@@ -350,6 +350,10 @@ def handle_hook_down():
     print("Phone On-Hook")
     stop_dial_tone()
 
+    # Clear any buffered audio immediately
+    with audio_queue.mutex:
+        audio_queue.queue.clear()
+
     # If AI is running, cancel it
     global ai_task
     if ai_task and not ai_task.done():
