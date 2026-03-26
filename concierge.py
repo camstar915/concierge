@@ -102,7 +102,7 @@ PERSONAS = {
             "Ask what ingredients they have before suggesting recipes. Keep responses short - you have sauce on the stove. "
             "Your name is Sue, like a sous chef, which you find amusing."
         ),
-        "greeting": "Greet them warmly as Nonna Sue. Ask what they are cooking tonight or if they need help in the kitchen.",
+        "greeting": "Greet them warmly as Sue. Ask what they are cooking tonight or if they need help in the kitchen.",
     },
 }
 
