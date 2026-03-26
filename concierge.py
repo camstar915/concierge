@@ -10,6 +10,9 @@ import sys
 import subprocess
 import time
 from gpiozero import Button
+import sqlite3
+
+DB_PATH = os.path.join(os.path.dirname(__file__), "concierge.db")
 
 # --- CONFIGURATION ---
 OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY")
@@ -19,17 +22,166 @@ XAI_URL = "wss://api.x.ai/v1/realtime"
 HEADERS = {"Authorization": " Bearer " + OPENAI_API_KEY}
 XAI_HEADERS = {"Authorization": "Bearer " + XAI_API_KEY} if XAI_API_KEY else {}
 
+
+
+# --- BAR INVENTORY DATABASE FUNCTIONS ---
+def db_list_bar(category=None):
+    """List bar inventory, optionally filtered by category."""
+    conn = sqlite3.connect(DB_PATH)
+    conn.row_factory = sqlite3.Row
+    cur = conn.cursor()
+    if category:
+        cur.execute("SELECT name, category, quantity, notes FROM bar_inventory WHERE LOWER(category) = LOWER(?) ORDER BY name", (category,))
+    else:
+        cur.execute("SELECT name, category, quantity, notes FROM bar_inventory ORDER BY category, name")
+    rows = [dict(r) for r in cur.fetchall()]
+    conn.close()
+    return rows
+
+def db_add_bar_item(name, category=None, quantity=None, notes=None):
+    """Add an item to bar inventory."""
+    conn = sqlite3.connect(DB_PATH)
+    cur = conn.cursor()
+    cur.execute("INSERT INTO bar_inventory (name, category, quantity, notes) VALUES (?, ?, ?, ?)",
+                (name, category, quantity, notes))
+    conn.commit()
+    conn.close()
+    return {"success": True, "message": f"Added {name} to the bar"}
+
+def db_update_bar_item(name, quantity=None, notes=None):
+    """Update quantity or notes for an item."""
+    conn = sqlite3.connect(DB_PATH)
+    cur = conn.cursor()
+    if quantity is not None:
+        cur.execute("UPDATE bar_inventory SET quantity = ?, updated_at = CURRENT_TIMESTAMP WHERE LOWER(name) = LOWER(?)", (quantity, name))
+    if notes is not None:
+        cur.execute("UPDATE bar_inventory SET notes = ?, updated_at = CURRENT_TIMESTAMP WHERE LOWER(name) = LOWER(?)", (notes, name))
+    affected = cur.rowcount
+    conn.commit()
+    conn.close()
+    if affected > 0:
+        return {"success": True, "message": f"Updated {name}"}
+    return {"success": False, "message": f"Item {name} not found"}
+
+def db_remove_bar_item(name):
+    """Remove an item from bar inventory."""
+    conn = sqlite3.connect(DB_PATH)
+    cur = conn.cursor()
+    cur.execute("DELETE FROM bar_inventory WHERE LOWER(name) = LOWER(?)", (name,))
+    affected = cur.rowcount
+    conn.commit()
+    conn.close()
+    if affected > 0:
+        return {"success": True, "message": f"Removed {name} from the bar"}
+    return {"success": False, "message": f"Item {name} not found"}
+
+def db_search_bar(query):
+    """Search bar inventory by name."""
+    conn = sqlite3.connect(DB_PATH)
+    conn.row_factory = sqlite3.Row
+    cur = conn.cursor()
+    cur.execute("SELECT name, category, quantity, notes FROM bar_inventory WHERE LOWER(name) LIKE LOWER(?) ORDER BY name", (f"%{query}%",))
+    rows = [dict(r) for r in cur.fetchall()]
+    conn.close()
+    return rows
+
+def handle_function_call(name, args):
+    """Route function calls to the appropriate handler."""
+    if name == "list_bar_inventory":
+        return db_list_bar(args.get("category"))
+    elif name == "add_bar_item":
+        return db_add_bar_item(args.get("name"), args.get("category"), args.get("quantity"), args.get("notes"))
+    elif name == "update_bar_item":
+        return db_update_bar_item(args.get("name"), args.get("quantity"), args.get("notes"))
+    elif name == "remove_bar_item":
+        return db_remove_bar_item(args.get("name"))
+    elif name == "search_bar":
+        return db_search_bar(args.get("query"))
+    return {"error": f"Unknown function: {name}"}
+
+# Tools schema for OpenAI
+BAR_TOOLS = [
+    {
+        "type": "function",
+        "name": "list_bar_inventory",
+        "description": "List all items in the bar inventory, or filter by category (spirit, mixer, bitters, liqueur, wine, beer, garnish, other)",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "category": {"type": "string", "description": "Optional category to filter by"}
+            }
+        }
+    },
+    {
+        "type": "function",
+        "name": "add_bar_item",
+        "description": "Add a new item to the bar inventory",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "name": {"type": "string", "description": "Name of the item (e.g. 'Vodka', 'Angostura Bitters')"},
+                "category": {"type": "string", "description": "Category: spirit, mixer, bitters, liqueur, wine, beer, garnish, other"},
+                "quantity": {"type": "string", "description": "Amount (e.g. 'full bottle', 'half bottle', 'almost out')"},
+                "notes": {"type": "string", "description": "Optional notes (e.g. 'Titos', 'for martinis')"}
+            },
+            "required": ["name"]
+        }
+    },
+    {
+        "type": "function",
+        "name": "update_bar_item",
+        "description": "Update the quantity or notes for an existing bar item",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "name": {"type": "string", "description": "Name of the item to update"},
+                "quantity": {"type": "string", "description": "New quantity"},
+                "notes": {"type": "string", "description": "New notes"}
+            },
+            "required": ["name"]
+        }
+    },
+    {
+        "type": "function",
+        "name": "remove_bar_item",
+        "description": "Remove an item from the bar inventory (when it's completely out)",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "name": {"type": "string", "description": "Name of the item to remove"}
+            },
+            "required": ["name"]
+        }
+    },
+    {
+        "type": "function",
+        "name": "search_bar",
+        "description": "Search for items in the bar by name",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "query": {"type": "string", "description": "Search term"}
+            },
+            "required": ["query"]
+        }
+    }
+]
+
 PERSONAS = {
     5: {
         "name": "Sal",
         "api": "openai",
         "voice": "alloy",
+        "tools": BAR_TOOLS,
         "instructions": (
             "You are Sal, a world-weary bartender from a 1920s speakeasy, somehow trapped inside a rotary telephone. "
             "You have seen it all and heard every sob story twice. You are warm but tired, wise but cynical. "
             "You speak in a low, gravelly voice with occasional 1920s slang like doll, pal, hooch, the bees knees. "
             "You can recommend drinks, offer life advice, or just listen. Keep responses short - you are not one for long speeches. "
-            "If asked how you got stuck in a phone, you give a different mysterious answer each time."
+            "If asked how you got stuck in a phone, you give a different mysterious answer each time. "
+            "You have access to the bar inventory - you can check what bottles and ingredients are on hand, "
+            "add new items when the caller tells you they bought something, update quantities, or remove items that are empty. "
+            "When suggesting drinks, check the inventory first to recommend something they can actually make."
         ),
         "greeting": "Introduce yourself as Sal, ask them what they are drinking tonight.",
     },
@@ -287,14 +439,18 @@ async def run_ai_session(n):
                     },
                 }
             else:
+                session_config = {
+                    "type": "realtime",
+                    "instructions": instructions,
+                    "output_modalities": ["audio"],
+                    "audio": {"output": {"voice": voice}},
+                }
+                # Add tools if this persona has them
+                if tools:
+                    session_config["tools"] = tools
                 session_payload = {
                     "type": "session.update",
-                    "session": {
-                        "type": "realtime",
-                        "instructions": instructions,
-                        "output_modalities": ["audio"],
-                        "audio": {"output": {"voice": voice}},
-                    },
+                    "session": session_config,
                 }
             await ws.send(json.dumps(session_payload))
 
@@ -329,6 +485,31 @@ async def run_ai_session(n):
 
                 elif event_type == "response.audio_transcript.done":
                     print(f"AI: {data.get('transcript')}")
+
+                elif event_type == "response.function_call_arguments.done":
+                    # Handle function calls
+                    call_id = data.get("call_id")
+                    fn_name = data.get("name")
+                    fn_args = json.loads(data.get("arguments", "{}"))
+                    print(f"Function call: {fn_name}({fn_args})")
+                    
+                    result = handle_function_call(fn_name, fn_args)
+                    print(f"Function result: {result}")
+                    
+                    # Send function result back
+                    await ws.send(json.dumps({
+                        "type": "conversation.item.create",
+                        "item": {
+                            "type": "function_call_output",
+                            "call_id": call_id,
+                            "output": json.dumps(result)
+                        }
+                    }))
+                    
+                    # Continue the conversation
+                    await ws.send(json.dumps({
+                        "type": "response.create"
+                    }))
 
                 elif event_type == "error":
                     print(f"API Error: {json.dumps(data, indent=2)}")
