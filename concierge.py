@@ -404,6 +404,7 @@ async def run_ai_session(n):
     voice = persona["voice"]
     greeting = persona["greeting"]
     api = persona["api"]
+    tools = persona.get("tools", [])
     api_cfg = API_CONFIG[api]
     api_url = api_cfg["url"]
     api_headers = api_cfg["headers"]
