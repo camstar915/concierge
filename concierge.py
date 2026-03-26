@@ -31,29 +31,31 @@ def db_list_bar(category=None):
     conn.row_factory = sqlite3.Row
     cur = conn.cursor()
     if category:
-        cur.execute("SELECT name, category, quantity, notes FROM bar_inventory WHERE LOWER(category) = LOWER(?) ORDER BY name", (category,))
+        cur.execute("SELECT name, category, quantity, location, notes FROM bar_inventory WHERE LOWER(category) = LOWER(?) ORDER BY name", (category,))
     else:
-        cur.execute("SELECT name, category, quantity, notes FROM bar_inventory ORDER BY category, name")
+        cur.execute("SELECT name, category, quantity, location, notes FROM bar_inventory ORDER BY category, name")
     rows = [dict(r) for r in cur.fetchall()]
     conn.close()
     return rows
 
-def db_add_bar_item(name, category=None, quantity=None, notes=None):
+def db_add_bar_item(name, category=None, quantity=None, location=None, notes=None):
     """Add an item to bar inventory."""
     conn = sqlite3.connect(DB_PATH)
     cur = conn.cursor()
-    cur.execute("INSERT INTO bar_inventory (name, category, quantity, notes) VALUES (?, ?, ?, ?)",
-                (name, category, quantity, notes))
+    cur.execute("INSERT INTO bar_inventory (name, category, quantity, location, notes) VALUES (?, ?, ?, ?, ?)",
+                (name, category, quantity, location, notes))
     conn.commit()
     conn.close()
     return {"success": True, "message": f"Added {name} to the bar"}
 
-def db_update_bar_item(name, quantity=None, notes=None):
+def db_update_bar_item(name, quantity=None, location=None, notes=None):
     """Update quantity or notes for an item."""
     conn = sqlite3.connect(DB_PATH)
     cur = conn.cursor()
     if quantity is not None:
         cur.execute("UPDATE bar_inventory SET quantity = ?, updated_at = CURRENT_TIMESTAMP WHERE LOWER(name) = LOWER(?)", (quantity, name))
+    if location is not None:
+        cur.execute("UPDATE bar_inventory SET location = ?, updated_at = CURRENT_TIMESTAMP WHERE LOWER(name) = LOWER(?)", (location, name))
     if notes is not None:
         cur.execute("UPDATE bar_inventory SET notes = ?, updated_at = CURRENT_TIMESTAMP WHERE LOWER(name) = LOWER(?)", (notes, name))
     affected = cur.rowcount
@@ -80,7 +82,7 @@ def db_search_bar(query):
     conn = sqlite3.connect(DB_PATH)
     conn.row_factory = sqlite3.Row
     cur = conn.cursor()
-    cur.execute("SELECT name, category, quantity, notes FROM bar_inventory WHERE LOWER(name) LIKE LOWER(?) ORDER BY name", (f"%{query}%",))
+    cur.execute("SELECT name, category, quantity, location, notes FROM bar_inventory WHERE LOWER(name) LIKE LOWER(?) ORDER BY name", (f"%{query}%",))
     rows = [dict(r) for r in cur.fetchall()]
     conn.close()
     return rows
@@ -90,9 +92,9 @@ def handle_function_call(name, args):
     if name == "list_bar_inventory":
         return db_list_bar(args.get("category"))
     elif name == "add_bar_item":
-        return db_add_bar_item(args.get("name"), args.get("category"), args.get("quantity"), args.get("notes"))
+        return db_add_bar_item(args.get("name"), args.get("category"), args.get("quantity"), args.get("location"), args.get("notes"))
     elif name == "update_bar_item":
-        return db_update_bar_item(args.get("name"), args.get("quantity"), args.get("notes"))
+        return db_update_bar_item(args.get("name"), args.get("quantity"), args.get("location"), args.get("notes"))
     elif name == "remove_bar_item":
         return db_remove_bar_item(args.get("name"))
     elif name == "search_bar":
@@ -122,6 +124,7 @@ BAR_TOOLS = [
                 "name": {"type": "string", "description": "Name of the item (e.g. 'Vodka', 'Angostura Bitters')"},
                 "category": {"type": "string", "description": "Category: spirit, mixer, bitters, liqueur, wine, beer, garnish, other"},
                 "quantity": {"type": "string", "description": "Amount (e.g. 'full bottle', 'half bottle', 'almost out')"},
+                "location": {"type": "string", "description": "Where it is stored (e.g. 'fridge', 'cabinet', 'freezer', 'bar cart')"},
                 "notes": {"type": "string", "description": "Optional notes (e.g. 'Titos', 'for martinis')"}
             },
             "required": ["name"]
@@ -136,6 +139,7 @@ BAR_TOOLS = [
             "properties": {
                 "name": {"type": "string", "description": "Name of the item to update"},
                 "quantity": {"type": "string", "description": "New quantity"},
+                "location": {"type": "string", "description": "New location (e.g. 'fridge', 'cabinet', 'freezer')"},
                 "notes": {"type": "string", "description": "New notes"}
             },
             "required": ["name"]
