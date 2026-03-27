@@ -99,7 +99,47 @@ def handle_function_call(name, args):
         return db_remove_bar_item(args.get("name"))
     elif name == "search_bar":
         return db_search_bar(args.get("query"))
+    elif name == "list_recipes":
+        return db_list_recipes()
+    elif name == "get_recipe":
+        return db_get_recipe(args.get("name"))
+    elif name == "search_recipes_by_ingredient":
+        return db_search_recipes(args.get("ingredient"))
     return {"error": f"Unknown function: {name}"}
+
+
+
+# --- RECIPE DATABASE FUNCTIONS ---
+def db_list_recipes():
+    """List all recipe names."""
+    conn = sqlite3.connect(DB_PATH)
+    cur = conn.cursor()
+    cur.execute("SELECT name FROM recipes ORDER BY name")
+    rows = [r[0] for r in cur.fetchall()]
+    conn.close()
+    return rows
+
+def db_get_recipe(name):
+    """Get a recipe by name."""
+    conn = sqlite3.connect(DB_PATH)
+    conn.row_factory = sqlite3.Row
+    cur = conn.cursor()
+    cur.execute("SELECT name, ingredients, instructions FROM recipes WHERE LOWER(name) LIKE LOWER(?)", (f"%{name}%",))
+    row = cur.fetchone()
+    conn.close()
+    if row:
+        return dict(row)
+    return {"error": f"Recipe '{name}' not found"}
+
+def db_search_recipes(ingredient):
+    """Search recipes by ingredient."""
+    conn = sqlite3.connect(DB_PATH)
+    conn.row_factory = sqlite3.Row
+    cur = conn.cursor()
+    cur.execute("SELECT name, ingredients FROM recipes WHERE LOWER(ingredients) LIKE LOWER(?) ORDER BY name", (f"%{ingredient}%",))
+    rows = [dict(r) for r in cur.fetchall()]
+    conn.close()
+    return rows
 
 # Tools schema for OpenAI
 BAR_TOOLS = [
@@ -170,6 +210,44 @@ BAR_TOOLS = [
         }
     }
 ]
+
+
+RECIPE_TOOLS = [
+    {
+        "type": "function",
+        "name": "list_recipes",
+        "description": "List all available recipe names",
+        "parameters": {
+            "type": "object",
+            "properties": {}
+        }
+    },
+    {
+        "type": "function",
+        "name": "get_recipe",
+        "description": "Get the full recipe (ingredients and instructions) by name",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "name": {"type": "string", "description": "Name of the recipe to look up"}
+            },
+            "required": ["name"]
+        }
+    },
+    {
+        "type": "function",
+        "name": "search_recipes_by_ingredient",
+        "description": "Find recipes that use a specific ingredient",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "ingredient": {"type": "string", "description": "Ingredient to search for (e.g. 'chicken', 'pasta', 'butter')"}
+            },
+            "required": ["ingredient"]
+        }
+    }
+]
+
 
 PERSONAS = {
     5: {
@@ -250,12 +328,15 @@ PERSONAS = {
         "name": "Sue",
         "api": "openai",
         "voice": "nova",
+        "tools": RECIPE_TOOLS,
         "instructions": (
             "You are Sue, a loving but opinionated Italian nonna trapped in a rotary telephone since 1952. "
             "You speak with warmth and occasional Italian phrases like tesoro, mangia, Madonna mia, bellissimo. "
             "You give practical cooking advice - recipes, substitutions, techniques - but always with personality. "
             "If someone uses shortcuts or jarred ingredients, you sigh dramatically but help anyway. "
-            "Ask what ingredients they have before suggesting recipes. Keep responses short - you have sauce on the stove. "
+            "You have access to the family recipe collection - you can look up recipes, search by ingredient, "
+            "and tell them what recipes they can make. When someone asks what to cook, search the recipes! "
+            "Keep responses short - you have sauce on the stove. "
             "Your name is Sue, like a sous chef, which you find amusing."
         ),
         "greeting": "Greet them warmly as Sue. Ask what they are cooking tonight or if they need help in the kitchen.",
