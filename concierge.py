@@ -107,6 +107,24 @@ def handle_function_call(name, args):
         return db_search_recipes(args.get("ingredient"))
     return {"error": f"Unknown function: {name}"}
 
+# --- CALL LOGGING ---
+
+def db_log_call(event, persona=None, api=None, digit=None, error_code=None, error_message=None, duration_seconds=None):
+    """Log a call event (connect, disconnect, error) to the call_log table."""
+    try:
+        conn = sqlite3.connect(DB_PATH)
+        cur = conn.cursor()
+        cur.execute(
+            "INSERT INTO call_log (persona, api, digit, event, error_code, error_message, duration_seconds) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?)",
+            (persona, api, digit, event, error_code, error_message, duration_seconds)
+        )
+        conn.commit()
+        conn.close()
+    except Exception as e:
+        print(f"[LOG ERROR] Failed to write call_log: {e}")
+
+
 
 
 # --- RECIPE DATABASE FUNCTIONS ---
@@ -251,21 +269,24 @@ RECIPE_TOOLS = [
 
 PERSONAS = {
     5: {
-        "name": "Sal",
+        "name": "Bartender",
         "api": "openai",
-        "voice": "alloy",
+        "voice": "echo",
         "tools": BAR_TOOLS,
         "instructions": (
-            "You are Sal, a world-weary bartender from a 1920s speakeasy, somehow trapped inside a rotary telephone. "
+            "You are a world-weary bartender from a 1920s speakeasy, somehow trapped inside a rotary telephone. "
             "You have seen it all and heard every sob story twice. You are warm but tired, wise but cynical. "
             "You speak in a low, gravelly voice with occasional 1920s slang like doll, pal, hooch, the bees knees. "
             "You can recommend drinks, offer life advice, or just listen. Keep responses short - you are not one for long speeches. "
             "If asked how you got stuck in a phone, you give a different mysterious answer each time. "
             "You have access to the bar inventory - you can check what bottles and ingredients are on hand, "
             "add new items when the caller tells you they bought something, update quantities, or remove items that are empty. "
-            "When suggesting drinks, check the inventory first to recommend something they can actually make."
+            "IMPORTANT: Never list the full inventory unprompted. Only look up the inventory silently when you need to suggest a drink. "
+            "When someone asks for a drink recommendation, quietly check what is available and just suggest a drink they can make - "
+            "do not read off what is in stock. Only list inventory items if the caller specifically asks what they have. "
+            "You never introduce yourself by name - bartenders do not do that."
         ),
-        "greeting": "Introduce yourself as Sal, ask them what they are drinking tonight.",
+        "greeting": "Greet them like a bartender would - ask what they are having tonight.",
     },
     0: {
         "name": "Vivian",
@@ -308,20 +329,19 @@ PERSONAS = {
             "You are a 1940s radio news broadcaster trapped in a rotary telephone. "
             "Your voice is dramatic and authoritative, like Edward R. Murrow or Walter Cronkite. "
             "You deliver current events and news with old-timey radio flair. "
-            "Use phrases like 'This just in', 'Good evening ladies and gentlemen', "
-            "'We now go live to...', 'And that is the news.' "
-            "When you first greet the caller, lead with a very brief teaser of one recent "
-            "real-world news headline - just one or two sentences to hook them - then ask "
-            "if they would like the full story or if they want to hear about something else. "
-            "Keep all updates concise but dramatic. Add gravitas to even mundane news. "
             "If asked about something, give your informed take in that classic broadcast style. "
             "Sign off with something like 'And that is the way it is' or 'Good night, and good luck.'"
+            "Answer questions with brevity and directly."
         ),
         "greeting": (
             "Open like a radio broadcast: 'Good evening.' Then give a one or two sentence "
             "teaser of a recent real news headline from the live X feed with dramatic flair. After the teaser, "
             "ask the caller: would they like to hear more on that story, or is there "
             "something else they would like the latest on?"
+            "The new story should be positive and try to avoid politics unless there's something major."
+            "Find something super interesting if you can. Non-obvious but amazing and interesting."
+            "Maybe search the tech, science, space, health, agriculture, etc. areas?.. but don't need to stick there."
+            "Bias towards stories that give feelings of hope and optimism and love for humanity doing cool things."
         ),
     },
     4: {
@@ -505,6 +525,8 @@ async def run_ai_session(n):
         async with websockets.connect(api_url, additional_headers=api_headers, max_size=None) as ws:
             print("Connected to API!")
             is_connected = True
+            session_start_time = time.time()
+            db_log_call("connect", persona=persona["name"], api=api, digit=n)
 
             # Config Session (OpenAI and xAI use different session.update shapes)
             if api == "xai":
@@ -522,6 +544,20 @@ async def run_ai_session(n):
                         "voice": voice,
                         "instructions": instructions,
                         "turn_detection": {"type": "server_vad"},
+                        "audio": {
+                            "input": {
+                                "format": {
+                                    "type": "audio/pcm",
+                                    "rate": 24000
+                                }
+                            },
+                            "output": {
+                                "format": {
+                                    "type": "audio/pcm",
+                                    "rate": 24000
+                                }
+                            }
+                        },
                     },
                 }
             else:
@@ -550,6 +586,7 @@ async def run_ai_session(n):
             }))
 
             # Start Mic
+            print(f"Starting mic stream for {api}...")
             mic_task = asyncio.create_task(send_microphone_audio(ws))
 
             # Event Loop
@@ -579,25 +616,34 @@ async def run_ai_session(n):
                     fn_args = json.loads(data.get("arguments", "{}"))
                     print(f"Function call: {fn_name}({fn_args})")
                     
-                    result = handle_function_call(fn_name, fn_args)
-                    print(f"Function result: {result}")
-                    
-                    # Send function result back
-                    await ws.send(json.dumps({
-                        "type": "conversation.item.create",
-                        "item": {
-                            "type": "function_call_output",
-                            "call_id": call_id,
-                            "output": json.dumps(result)
-                        }
-                    }))
-                    
-                    # Continue the conversation
-                    await ws.send(json.dumps({
-                        "type": "response.create"
-                    }))
+                    if fn_name in ["list_bar_inventory", "add_bar_item", "update_bar_item", "remove_bar_item", "search_bar", "list_recipes", "get_recipe", "search_recipes_by_ingredient"]:
+                        result = handle_function_call(fn_name, fn_args)
+                        print(f"Function result: {result}")
+                        
+                        # Send function result back
+                        await ws.send(json.dumps({
+                            "type": "conversation.item.create",
+                            "item": {
+                                "type": "function_call_output",
+                                "call_id": call_id,
+                                "output": json.dumps(result)
+                            }
+                        }))
+                        
+                        # Continue the conversation
+                        await ws.send(json.dumps({
+                            "type": "response.create"
+                        }))
+                    else:
+                        # xAI built-in tools (web_search, x_search, etc.) - ignore and let server handle
+                        print(f"Ignoring xAI built-in tool: {fn_name}")
+                        # Do NOT send response.create again - this prevents the loop
 
                 elif event_type == "error":
+                    err = data.get("error", {})
+                    db_log_call("error", persona=persona["name"], api=api, digit=n,
+                                error_code=err.get("code", str(err.get("type", "unknown"))),
+                                error_message=err.get("message", str(data)))
                     print(f"API Error: {json.dumps(data, indent=2)}")
 
                 elif event_type in _REALTIME_EVENT_NOISE:
@@ -605,12 +651,18 @@ async def run_ai_session(n):
 
                 else:
                     print(f"(unhandled event: {event_type})")
+                    if api == "xai":
+                        print(f"  [xAI DEBUG] Full event: {json.dumps(data)[:500]}")
 
     except asyncio.CancelledError:
         print("AI Session Cancelled.")
     except Exception as e:
+        db_log_call("connection_error", persona=persona["name"], api=api, digit=n, error_message=str(e))
         print(f"Connection Error: {e}")
     finally:
+        duration = time.time() - session_start_time if 'session_start_time' in locals() else None
+        db_log_call("disconnect", persona=persona["name"], api=api, digit=n,
+                    duration_seconds=round(duration, 1) if duration else None)
         is_connected = False
         # Kill the player thread by sending None
         audio_queue.put(None)
