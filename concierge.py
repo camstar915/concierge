@@ -346,8 +346,8 @@ PERSONAS = {
     },
     4: {
         "name": "Sue",
-        "api": "openai",
-        "voice": "nova",
+        "api": "xai",
+        "voice": "Eve",
         "tools": RECIPE_TOOLS,
         "instructions": (
             "You are Sue, a loving but opinionated Italian nonna trapped in a rotary telephone since 1952. "
