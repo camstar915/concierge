@@ -18,7 +18,7 @@ DB_PATH = os.path.join(os.path.dirname(__file__), "concierge.db")
 OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY")
 XAI_API_KEY = os.environ.get("XAI_API_KEY")
 URL = "wss://api.openai.com/v1/realtime?model=gpt-realtime-1.5"
-XAI_URL = "wss://api.x.ai/v1/realtime"
+XAI_URL = "wss://api.x.ai/v1/realtime?model=grok-voice-think-fast-1.0"
 HEADERS = {"Authorization": " Bearer " + OPENAI_API_KEY}
 XAI_HEADERS = {"Authorization": "Bearer " + XAI_API_KEY} if XAI_API_KEY else {}
 
