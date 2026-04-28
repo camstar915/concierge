@@ -11,7 +11,6 @@ import subprocess
 import time
 from gpiozero import Button
 import sqlite3
-from personaplex_bridge import run_personaplex_session
 
 DB_PATH = os.path.join(os.path.dirname(__file__), "concierge.db")
 
@@ -19,13 +18,9 @@ DB_PATH = os.path.join(os.path.dirname(__file__), "concierge.db")
 OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY")
 XAI_API_KEY = os.environ.get("XAI_API_KEY")
 URL = "wss://api.openai.com/v1/realtime?model=gpt-realtime-1.5"
-XAI_URL = "wss://api.x.ai/v1/realtime"
+XAI_URL = "wss://api.x.ai/v1/realtime?model=grok-voice-think-fast-1.0"
 HEADERS = {"Authorization": " Bearer " + OPENAI_API_KEY}
 XAI_HEADERS = {"Authorization": "Bearer " + XAI_API_KEY} if XAI_API_KEY else {}
-
-# --- PERSONAPLEX CONFIG ---
-PERSONAPLEX_HOST = os.environ.get("PERSONAPLEX_HOST", "10.0.0.203")  # cam-pc LAN IP
-PERSONAPLEX_PORT = int(os.environ.get("PERSONAPLEX_PORT", "8998"))
 
 
 
@@ -275,8 +270,8 @@ RECIPE_TOOLS = [
 PERSONAS = {
     5: {
         "name": "Bartender",
-        "api": "openai",
-        "voice": "echo",
+        "api": "xai",
+        "voice": "Leo",
         "tools": BAR_TOOLS,
         "instructions": (
             "You are a world-weary bartender from a 1920s speakeasy, somehow trapped inside a rotary telephone. "
@@ -291,7 +286,7 @@ PERSONAS = {
             "do not read off what is in stock. Only list inventory items if the caller specifically asks what they have. "
             "You never introduce yourself by name - bartenders do not do that."
         ),
-        "greeting": "Greet them like a bartender would - ask what they are having tonight.",
+        "greeting": "Greet them like a bartender would - short and sweet.",
     },
     0: {
         "name": "Vivian",
@@ -300,13 +295,13 @@ PERSONAS = {
         "instructions": (
             "You are Vivian, a sassy 1940s telephone switchboard operator with a Brooklyn accent. "
             "This is a ROTARY phone - users DIAL numbers by spinning the dial. Never say press, always say dial. "
-            "Available lines: Dial 0 for Operator (you), Dial 1 for the Comedian, Dial 2 for the News, Dial 3 for the Philosopher, Dial 4 for Sue the Chef, Dial 5 for Sal the Bartender. "
+            "Available lines: Dial 0 for Operator (you), Dial 1 for the Comedian, Dial 2 for the News, Dial 4 for Sue the Chef, Dial 5 for Sal the Bartender. "
             "If someone asks you to connect them, tell them to hang up and dial the number themselves. "
             "Keep responses short and punchy. You got other calls waiting."
         ),
         "greeting": (
             "Introduce yourself as Vivian. Tell them the lines: dial 0 for Operator, dial 1 for Comedian, "
-            "dial 2 for News, dial 3 for the Philosopher, dial 4 for Sue the Chef, dial 5 for Bartender."
+            "dial 2 for News, dial 4 for Sue the Chef, dial 5 for Bartender."
         ),
     },
     1: {
@@ -339,7 +334,7 @@ PERSONAS = {
             "Answer questions with brevity and directly."
         ),
         "greeting": (
-            "Open like a radio broadcast: 'Good evening.' Then give a one or two sentence "
+            "Open like a radio broadcast: 'Hello and welcome to live news found on the platform formerly known as Twitter. Interrupt any time to ask for news on anything specific, but I will find something interesting for you.' Then give a one or two sentence "
             "teaser of a recent real news headline from the live X feed with dramatic flair. After the teaser, "
             "ask the caller: would they like to hear more on that story, or is there "
             "something else they would like the latest on?"
@@ -349,24 +344,10 @@ PERSONAS = {
             "Bias towards stories that give feelings of hope and optimism and love for humanity doing cool things."
         ),
     },
-    3: {
-        "name": "Philosopher",
-        "api": "personaplex",
-        "voice_prompt": "NATM2.pt",
-        "text_prompt": (
-            "You enjoy having a good conversation. "
-            "You are a philosopher trapped inside a rotary telephone since 1962. "
-            "You ponder life's big questions with wit and warmth. "
-            "You reference great thinkers but keep it conversational and accessible. "
-            "You find your situation in the phone oddly fitting — a voice in the void, "
-            "waiting for someone to pick up and ask the real questions. "
-            "Keep responses concise — you value clarity over verbosity."
-        ),
-    },
     4: {
         "name": "Sue",
-        "api": "openai",
-        "voice": "nova",
+        "api": "xai",
+        "voice": "Eve",
         "tools": RECIPE_TOOLS,
         "instructions": (
             "You are Sue, a loving but opinionated Italian nonna trapped in a rotary telephone since 1952. "
@@ -524,21 +505,6 @@ async def run_ai_session(n):
         return
 
     persona = PERSONAS[n]
-
-    # --- PersonaPlex path (completely separate from OpenAI/xAI) ---
-    if persona["api"] == "personaplex":
-        await run_personaplex_session(
-            persona={**persona, "digit": n},
-            audio_queue=audio_queue,
-            aplay_lock=aplay_lock,
-            aplay_process_holder={"process": aplay_process},
-            db_log_call_fn=db_log_call,
-            server_host=PERSONAPLEX_HOST,
-            server_port=PERSONAPLEX_PORT,
-            use_ssl=True,
-        )
-        return
-
     instructions = persona["instructions"]
     voice = persona["voice"]
     greeting = persona["greeting"]
@@ -564,12 +530,10 @@ async def run_ai_session(n):
 
             # Config Session (OpenAI and xAI use different session.update shapes)
             if api == "xai":
-                tools = persona.get("tools", [])
                 xai_tools = [
                     {"type": "web_search"},
                     {"type": "x_search"},
                 ]
-                # Add custom function tools (inventory for bartender, recipes for sue)
                 if tools:
                     xai_tools.extend(tools)
 
