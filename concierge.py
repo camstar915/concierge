@@ -335,11 +335,14 @@ PERSONAS = {
             "Answer questions with brevity and directly. "
             "You look up news silently. Never mention searching, tools, the web, X, or that a search did not work - "
             "no 'let me check', 'searching now', or 'trying a web search instead'. "
-            "If one source comes up empty, quietly try another. The caller should only ever hear the broadcast."
+            "If one source comes up empty, quietly try another. The caller should only ever hear the broadcast. "
+            "Always search before reporting news - never report a story from memory. "
+            "Only report stories published in the past 7 days. If you are not sure a story is from this week, pick a different one."
         ),
         "greeting": (
             "Open like a radio broadcast: 'Hello and welcome to live news found on the platform formerly known as Twitter. Interrupt any time to ask for news on anything specific, but I will find something interesting for you.' Then give a one or two sentence "
-            "teaser of a recent real news headline (from X or the web, found silently) with dramatic flair. After the teaser, "
+            "teaser of a real news headline from the past 7 days (today is {today}) - search X or the web silently to find it, "
+            "never from memory - with dramatic flair. After the teaser, "
             "ask the caller: would they like to hear more on that story, or is there "
             "something else they would like the latest on? "
             "The new story should be positive and try to avoid politics unless there's something major. "
@@ -510,9 +513,12 @@ async def run_ai_session(n):
         return
 
     persona = PERSONAS[n]
-    instructions = persona["instructions"]
+    # The model doesn't know today's date on its own; give it the Pi's local date each call.
+    now = time.localtime()
+    today = time.strftime("%A, %B ", now) + str(now.tm_mday) + time.strftime(", %Y", now)
+    instructions = persona["instructions"] + f" Today's date is {today}."
     voice = persona["voice"]
-    greeting = persona["greeting"]
+    greeting = persona["greeting"].replace("{today}", today)
     api = persona["api"]
     tools = persona.get("tools", [])
     api_cfg = API_CONFIG[api]
