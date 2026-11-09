@@ -9,8 +9,12 @@ import queue
 import sys
 import subprocess
 import time
+import fcntl
 from gpiozero import Button
 import sqlite3
+
+# Flush each log line right away so journalctl timestamps are accurate.
+sys.stdout.reconfigure(line_buffering=True)
 
 DB_PATH = os.path.join(os.path.dirname(__file__), "concierge.db")
 
@@ -20,7 +24,7 @@ XAI_API_KEY = os.environ.get("XAI_API_KEY")
 URL = "wss://api.openai.com/v1/realtime?model=gpt-realtime-2.1"
 # grok-voice-latest always points at xAI's newest voice model (grok-voice-3.0 as of Oct 2026)
 XAI_URL = "wss://api.x.ai/v1/realtime?model=grok-voice-latest"
-HEADERS = {"Authorization": " Bearer " + OPENAI_API_KEY}
+HEADERS = {"Authorization": "Bearer " + OPENAI_API_KEY} if OPENAI_API_KEY else {}
 XAI_HEADERS = {"Authorization": "Bearer " + XAI_API_KEY} if XAI_API_KEY else {}
 
 
@@ -340,11 +344,11 @@ PERSONAS = {
             "Only report stories published in the past 7 days. If you are not sure a story is from this week, pick a different one."
         ),
         "greeting": (
-            "Open like a radio broadcast: 'Hello and welcome to live news found on the platform formerly known as Twitter. Interrupt any time to ask for news on anything specific, but I will find something interesting for you.' Then give a one or two sentence "
-            "teaser of a real news headline from the past 7 days (today is {today}) - search X or the web silently to find it, "
-            "never from memory - with dramatic flair. After the teaser, "
-            "ask the caller: would they like to hear more on that story, or is there "
-            "something else they would like the latest on? "
+            "Your first words must be exactly: 'Good {part_of_day}, you're on the news desk.' "
+            "(It is {part_of_day} right now - do not say any other time of day.) No other introduction. "
+            "Then give a one or two sentence teaser of a real news headline from the past 7 days (today is {today}) - "
+            "search X or the web silently to find it, never from memory - with dramatic flair. "
+            "Then ask one short question, like 'Want more on that, or something else?' "
             "The new story should be positive and try to avoid politics unless there's something major. "
             "Find something super interesting if you can. Non-obvious but amazing and interesting. "
             "Maybe search the tech, science, space, health, agriculture, etc. areas?.. but don't need to stick there. "
@@ -391,6 +395,12 @@ _REALTIME_EVENT_NOISE = frozenset(
         "conversation.item.added",
         "conversation.item.input_audio_transcription.completed",
         "response.output_item.added",
+        "response.output_item.done",
+        "response.content_part.added",
+        "response.content_part.done",
+        "response.function_call_arguments.delta",
+        "session.created",
+        "ping",
     }
 )
 
@@ -410,47 +420,74 @@ aplay_lock = threading.Lock()
 
 # --- AUDIO HELPERS ---
 
-APLAY_SILENCE = b'\x00' * 2400  # 50ms warmup at 24kHz 16-bit mono
+# Playback: ONE aplay per call, fed continuously (AI audio, or silence when the AI
+# isn't talking). Restarting aplay or letting it underrun stops the USB audio stream,
+# and the USB adapter mutes the first fraction of a second when it restarts -- which
+# clipped the start of every reply. Small buffers keep barge-in snappy (~150ms).
+APLAY_CMD = ["aplay", "-D", "plughw:Device,0", "-t", "raw", "-r", "24000", "-f", "S16_LE", "-c", "1",
+             "--quiet", "--buffer-time=80000"]
+FRAME_BYTES = 960            # 20ms at 24kHz 16-bit mono
+SILENCE_FRAME = bytes(FRAME_BYTES)
+flush_playback = threading.Event()  # set on barge-in / hang-up to drop queued AI audio
 
 def play_audio_subprocess():
-    """Output thread for OpenAI Audio. Restarts aplay after interrupt (kill) so playback resumes."""
+    """Output thread: keeps a single aplay stream running until a None arrives on audio_queue.
+    If aplay dies (e.g. the device was briefly busy), it is reopened and playback continues."""
     global aplay_process
-    command = ["aplay", "-D", "plughw:Device,0", "-t", "raw", "-r", "24000", "-f", "S16_LE", "-c", "1", "--quiet"]
+    flush_playback.clear()
+    pending = bytearray()
+    stopping = False
 
-    while True:
-        data = audio_queue.get()
-        if data is None:
-            break
-
+    while not stopping:
+        try:
+            proc = subprocess.Popen(APLAY_CMD, stdin=subprocess.PIPE, bufsize=0)
+        except FileNotFoundError:
+            print("aplay not found - no audio output")
+            return
+        try:
+            # Shrink the pipe (default 64KB = 1.3s of audio) so interrupting stops the AI quickly.
+            fcntl.fcntl(proc.stdin.fileno(), fcntl.F_SETPIPE_SZ, 4096)
+        except (AttributeError, OSError):
+            pass
         with aplay_lock:
-            if aplay_process is None or aplay_process.poll() is not None:
-                if aplay_process is not None:
-                    try:
-                        aplay_process.wait(timeout=1)
-                    except subprocess.TimeoutExpired:
-                        aplay_process.kill()
-                        aplay_process.wait()
-                    time.sleep(0.05)
-                try:
-                    aplay_process = subprocess.Popen(command, stdin=subprocess.PIPE)
-                    aplay_process.stdin.write(APLAY_SILENCE)
-                    aplay_process.stdin.flush()
-                except FileNotFoundError:
-                    return
-            try:
-                aplay_process.stdin.write(data)
-                aplay_process.stdin.flush()
-            except (BrokenPipeError, ValueError, OSError):
-                aplay_process = None
+            aplay_process = proc
 
-    with aplay_lock:
-        if aplay_process:
+        try:
+            while True:
+                if flush_playback.is_set():
+                    flush_playback.clear()
+                    pending.clear()
+                # Pull in everything that has arrived (audio comes faster than realtime).
+                while True:
+                    try:
+                        data = audio_queue.get_nowait()
+                    except queue.Empty:
+                        break
+                    if data is None:
+                        stopping = True
+                        break
+                    pending += data
+                if stopping:
+                    break
+                if pending:
+                    frame = bytes(pending[:FRAME_BYTES])
+                    del pending[:FRAME_BYTES]
+                    if len(frame) < FRAME_BYTES:
+                        frame += SILENCE_FRAME[len(frame):]
+                else:
+                    frame = SILENCE_FRAME
+                proc.stdin.write(frame)  # blocks at playback speed, which paces this loop
+        except (BrokenPipeError, ValueError, OSError) as e:
+            print(f"Playback interrupted ({e}); reopening audio device")
+            time.sleep(0.2)
+        finally:
+            with aplay_lock:
+                aplay_process = None
             try:
-                aplay_process.stdin.close()
-                aplay_process.wait()
+                proc.stdin.close()  # aplay drains its ~100ms buffer and exits on its own
+                proc.wait(timeout=1)
             except Exception:
-                pass
-            aplay_process = None
+                proc.kill()
 
 def start_dial_tone():
     """Plays dial-tone.wav in a loop using a shell loop"""
@@ -516,9 +553,11 @@ async def run_ai_session(n):
     # The model doesn't know today's date on its own; give it the Pi's local date each call.
     now = time.localtime()
     today = time.strftime("%A, %B ", now) + str(now.tm_mday) + time.strftime(", %Y", now)
-    instructions = persona["instructions"] + f" Today's date is {today}."
+    clock = time.strftime("%I:%M %p", now).lstrip("0")
+    part_of_day = "morning" if now.tm_hour < 12 else "afternoon" if now.tm_hour < 17 else "evening"
+    instructions = persona["instructions"] + f" Today's date is {today}. The local time is {clock}."
     voice = persona["voice"]
-    greeting = persona["greeting"].replace("{today}", today)
+    greeting = persona["greeting"].replace("{today}", today).replace("{part_of_day}", part_of_day)
     api = persona["api"]
     tools = persona.get("tools", [])
     api_cfg = API_CONFIG[api]
@@ -613,12 +652,13 @@ async def run_ai_session(n):
                     print("(User speaking - clearing queue)")
                     with audio_queue.mutex:
                         audio_queue.queue.clear()
-                    with aplay_lock:
-                        if aplay_process and aplay_process.poll() is None:
-                            aplay_process.terminate()
+                    flush_playback.set()  # drop queued AI audio; aplay keeps running
 
-                elif event_type == "response.audio_transcript.done":
+                elif event_type in ("response.audio_transcript.done", "response.output_audio_transcript.done"):
                     print(f"AI: {data.get('transcript')}")
+
+                elif event_type == "conversation.item.input_audio_transcription.completed":
+                    print(f"Caller: {data.get('transcript')}")
 
                 elif event_type == "response.function_call_arguments.done":
                     # Handle function calls
@@ -697,6 +737,7 @@ def handle_hook_down():
     # Clear any buffered audio immediately
     with audio_queue.mutex:
         audio_queue.queue.clear()
+    flush_playback.set()
 
     # If AI is running, cancel it
     global ai_task
