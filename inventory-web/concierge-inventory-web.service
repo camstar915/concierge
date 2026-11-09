@@ -1,0 +1,14 @@
+[Unit]
+Description=Concierge Inventory Web (read-only)
+After=network.target
+
+[Service]
+Type=simple
+User=camstar915
+WorkingDirectory=/home/camstar915/concierge-inventory-web
+ExecStart=/usr/bin/python3 /home/camstar915/concierge-inventory-web/app.py
+Restart=always
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target

@@ -8,6 +8,8 @@ WEB INVENTORY (bar + recipes + call log):
   http://concierge.local:8080
   (or http://10.0.0.50:8080)
   Runs on concierge-inventory-web.service
+  Code: inventory-web/ in this repo, but the Pi runs it
+  from ~/concierge-inventory-web (copy app.py there after edits)
 
 STATUS:
   sudo systemctl status concierge
