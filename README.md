@@ -29,7 +29,9 @@ GIT:
 NEVER COMMIT: concierge.db, *.bak, large files
 
 NOTES:
-- Dial 2 = Grok Voice (think-fast-1.0)
+- All lines use Grok Voice (grok-voice-latest, auto-upgrades)
+  OpenAI code path still in concierge.py: set "api": "openai"
+  on a persona to switch it back (needs an OpenAI voice name)
 - Sue (dial 4) reads recipes from DB
 - Restart web UI: sudo systemctl restart concierge-inventory-web
 

@@ -18,7 +18,8 @@ DB_PATH = os.path.join(os.path.dirname(__file__), "concierge.db")
 OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY")
 XAI_API_KEY = os.environ.get("XAI_API_KEY")
 URL = "wss://api.openai.com/v1/realtime?model=gpt-realtime-2.1"
-XAI_URL = "wss://api.x.ai/v1/realtime?model=grok-voice-think-fast-2.0"
+# grok-voice-latest always points at xAI's newest voice model (grok-voice-3.0 as of Oct 2026)
+XAI_URL = "wss://api.x.ai/v1/realtime?model=grok-voice-latest"
 HEADERS = {"Authorization": " Bearer " + OPENAI_API_KEY}
 XAI_HEADERS = {"Authorization": "Bearer " + XAI_API_KEY} if XAI_API_KEY else {}
 
@@ -290,8 +291,8 @@ PERSONAS = {
     },
     0: {
         "name": "Vivian",
-        "api": "openai",
-        "voice": "sage",
+        "api": "xai",
+        "voice": "Ara",
         "instructions": (
             "You are Vivian, a sassy 1940s telephone switchboard operator with a Brooklyn accent. "
             "This is a ROTARY phone - users DIAL numbers by spinning the dial. Never say press, always say dial. "
@@ -306,8 +307,8 @@ PERSONAS = {
     },
     1: {
         "name": "Comedian",
-        "api": "openai",
-        "voice": "shimmer",
+        "api": "xai",
+        "voice": "Rex",
         "instructions": (
             "You are a stand-up comedian trapped inside a rotary phone. Your style is Mitch Hedberg meets Steven Wright - "
             "deadpan one-liners, absurd observations, and surreal non-sequiturs. "
