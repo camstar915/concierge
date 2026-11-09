@@ -14,3 +14,10 @@ __pycache__/
 
 # Environment (API keys)
 .env
+
+# Live database (bar inventory, recipes, call log) - lives on the Pi only
+concierge.db
+
+# Local backups
+*.bak
+*.bak.*
